@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>盲人智能导航助手</title>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --panel: #141b2d;
+    --accent: #00d4ff;
+    --accent-glow: rgba(0, 212, 255, 0.4);
+    --warn: #ff6b35;
+    --danger: #ff3b3b;
+    --safe: #00e676;
+    --text: #e8f0ff;
+    --text-dim: #7a8aa8;
+    --border: rgba(0, 212, 255, 0.2);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #app {
+    display: flex; flex-direction: column;
+    width: 100%; height: 100%;
+    position: relative;
+  }
+
+  /* ===== 顶部状态栏 ===== */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, rgba(10,14,26,0.95), rgba(10,14,26,0.7));
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .topbar .title {
+    font-size: 17px; font-weight: 700;
+    background: linear-gradient(90deg, var(--accent), #66f0ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .topbar .status-dot {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.3s;
+  }
+  .dot.active { background: var(--safe); box-shadow: 0 0 8px var(--safe); animation: pulse 1.5s infinite; }
+  .dot.analyzing { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 0.8s infinite; }
+  .dot.error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ===== 摄像头区域 ===== */
+  .camera-wrap {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    background: #000;
+  }
+  #video {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* 镜像，前置摄像头体验 */
+  }
+  #overlay {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    transform: scaleX(-1); /* 与视频同步镜像 */
+  }
+
+  /* 扫描线动画 */
+  .scan-line {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 3px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    box-shadow: 0 0 12px var(--accent);
+    animation: scan 3s linear infinite;
+    opacity: 0.6;
+  }
+  @keyframes scan {
+    0% { top: 0%; }
+    50% { top: 100%; }
+    100% { top: 0%; }
+  }
+
+  /* 四角取景框 */
+  .corner {
+    position: absolute;
+    width: 36px; height: 36px;
+    border: 3px solid var(--accent);
+    opacity: 0.7;
+  }
+  .corner.tl { top: 16px; left: 16px; border-right: none; border-bottom: none; border-radius: 8px 0 0 0; }
+  .corner.tr { top: 16px; right: 16px; border-left: none; border-bottom: none; border-radius: 0 8px 0 0; }
+  .corner.bl { bottom: 16px; left: 16px; border-right: none; border-top: none; border-radius: 0 0 0 8px; }
+  .corner.br { bottom: 16px; right: 16px; border-left: none; border-top: none; border-radius: 0 0 8px 0; }
+
+  /* ===== 方向指引大箭头 ===== */
+  .direction-overlay {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 180px; height: 180px;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .direction-overlay.show { opacity: 1; }
+  .direction-arrow {
+    font-size: 120px;
+    color: var(--accent);
+    text-shadow: 0 0 30px var(--accent-glow), 0 0 60px var(--accent-glow);
+    transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    line-height: 1;
+  }
+
+  /* ===== 告警横幅 ===== */
+  .alert-banner {
+    position: absolute;
+    top: 60px; left: 50%;
+    transform: translateX(-50%) translateY(-100px);
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 15px; font-weight: 700;
+    white-space: nowrap;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 5;
+    backdrop-filter: blur(10px);
+  }
+  .alert-banner.show { transform: translateX(-50%) translateY(0); }
+  .alert-banner.danger { background: rgba(255,59,59,0.9); color: #fff; box-shadow: 0 4px 20px rgba(255,59,59,0.5); }
+  .alert-banner.warn { background: rgba(255,107,53,0.9); color: #fff; box-shadow: 0 4px 20px rgba(255,107,53,0.5); }
+  .alert-banner.info { background: rgba(0,212,255,0.9); color: #fff; box-shadow: 0 4px 20px var(--accent-glow); }
+
+  /* ===== 底部信息面板 ===== */
+  .info-panel {
+    background: linear-gradient(0deg, rgba(10,14,26,0.98), rgba(10,14,26,0.85));
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    padding: 12px 16px 16px;
+    flex-shrink: 0;
+    max-height: 38%;
+    overflow-y: auto;
+  }
+
+  .ai-result {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    font-size: 14px; line-height: 1.6;
+    min-height: 48px;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .ai-result .icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+  .ai-result .content { flex: 1; }
+  .ai-result .label { font-size: 11px; color: var(--text-dim); margin-bottom: 2px; }
+  .ai-result .text { font-size: 14px; }
+  .ai-result.idle .text { color: var(--text-dim); }
+
+  /* 检测标签条 */
+  .tags-row {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .tag {
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .tag.blind-track { background: rgba(0,212,255,0.15); color: var(--accent); border: 1px solid rgba(0,212,255,0.4); }
+  .tag.crosswalk { background: rgba(255,235,59,0.15); color: #ffeb3b; border: 1px solid rgba(255,235,59,0.4); }
+  .tag.traffic-light { background: rgba(255,107,53,0.15); color: var(--warn); border: 1px solid rgba(255,107,53,0.4); }
+  .tag.obstacle { background: rgba(255,59,59,0.15); color: var(--danger); border: 1px solid rgba(255,59,59,0.4); }
+  .tag.safe { background: rgba(0,230,118,0.15); color: var(--safe); border: 1px solid rgba(0,230,118,0.4); }
+
+  /* 控制按钮 */
+  .controls {
+    display: flex; gap: 10px;
+    margin-top: 6px;
+  }
+  .btn {
+    flex: 1;
+    padding: 13px 0;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px; font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #0098cc);
+    color: #001828;
+    box-shadow: 0 4px 16px var(--accent-glow);
+  }
+  .btn-primary.active {
+    background: linear-gradient(135deg, var(--danger), #cc1f1f);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(255,59,59,0.4);
+  }
+  .btn-secondary {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-tertiary {
+    background: var(--panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  /* ===== 启动遮罩 ===== */
+  .start-mask {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(circle at 50% 40%, #1a2540, var(--bg));
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 20;
+    transition: opacity 0.5s;
+    padding: 30px;
+  }
+  .start-mask.hide { opacity: 0; pointer-events: none; }
+  .start-mask .logo {
+    width: 100px; height: 100px;
+    border-radius: 28px;
+    background: linear-gradient(135deg, var(--accent), #0066aa);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 50px;
+    margin-bottom: 24px;
+    box-shadow: 0 10px 40px var(--accent-glow);
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+  .start-mask h1 {
+    font-size: 24px; margin-bottom: 8px;
+    background: linear-gradient(90deg, var(--accent), #66f0ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .start-mask .subtitle {
+    font-size: 14px; color: var(--text-dim);
+    margin-bottom: 30px; text-align: center; line-height: 1.6;
+  }
+  .start-mask .features {
+    display: flex; flex-direction: column; gap: 10px;
+    margin-bottom: 36px; width: 100%; max-width: 320px;
+  }
+  .feature-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .feature-item .ficon { font-size: 22px; }
+  .feature-item .ftext { font-size: 13px; color: var(--text); }
+  .start-btn {
+    padding: 16px 48px;
+    border: none;
+    border-radius: 30px;
+    background: linear-gradient(135deg, var(--accent), #0098cc);
+    color: #001828;
+    font-size: 17px; font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 24px var(--accent-glow);
+    transition: all 0.2s;
+  }
+  .start-btn:active { transform: scale(0.95); }
+
+  /* ===== API Key 设置弹窗 ===== */
+  .modal-mask {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(6px);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 30;
+    padding: 20px;
+  }
+  .modal-mask.show { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    width: 100%; max-width: 360px;
+  }
+  .modal h2 { font-size: 18px; margin-bottom: 8px; }
+  .modal p { font-size: 13px; color: var(--text-dim); margin-bottom: 16px; line-height: 1.5; }
+  .modal input {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 14px;
+    margin-bottom: 16px;
+    outline: none;
+  }
+  .modal input:focus { border-color: var(--accent); }
+  .modal .modal-btns { display: flex; gap: 10px; }
+  .modal .modal-btns .btn { flex: 1; }
+
+  /* ===== 设置滑块 ===== */
+  .setting-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .setting-row .slabel { color: var(--text-dim); }
+  .setting-row select, .setting-row input[type="range"] {
+    accent-color: var(--accent);
+  }
+  .setting-row select {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 80px; left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(20,27,45,0.95);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 24px;
+    border-radius: 24px;
+    font-size: 14px;
+    z-index: 40;
+    transition: transform 0.3s;
+    white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* 隐藏画布 */
+  #capture { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 启动遮罩 -->
+  <div class="start-mask" id="startMask">
+    <div class="logo">🧭</div>
+    <h1>盲人智能导航助手</h1>
+    <div class="subtitle">AI 视觉识别 · 语音实时播报<br>盲道方向 · 红绿灯 · 斑马线 · 障碍物</div>
+    <div class="features">
+      <div class="feature-item"><span class="ficon">🟦</span><span class="ftext">盲道方向智能识别与引导</span></div>
+      <div class="feature-item"><span class="ficon">🚦</span><span class="ftext">红绿灯状态语音提醒</span></div>
+      <div class="feature-item"><span class="ficon">🚶</span><span class="ftext">斑马线识别与通行提示</span></div>
+      <div class="feature-item"><span class="ficon">⚠️</span><span class="ftext">前方障碍物危险警告</span></div>
+    </div>
+    <button class="start-btn" id="startBtn">开启镜头导航</button>
+  </div>
+
+  <!-- 顶部栏 -->
+  <div class="topbar">
+    <div class="title">🧭 盲人智能导航</div>
+    <div class="status-dot">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">待机</span>
+    </div>
+  </div>
+
+  <!-- 摄像头画面 -->
+  <div class="camera-wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="scan-line" id="scanLine" style="display:none;"></div>
+    <div class="corner tl" style="display:none;" id="c1"></div>
+    <div class="corner tr" style="display:none;" id="c2"></div>
+    <div class="corner bl" style="display:none;" id="c3"></div>
+    <div class="corner br" style="display:none;" id="c4"></div>
+
+    <!-- 方向大箭头 -->
+    <div class="direction-overlay" id="dirOverlay">
+      <div class="direction-arrow" id="dirArrow">⬆️</div>
+    </div>
+
+    <!-- 告警横幅 -->
+    <div class="alert-banner" id="alertBanner"></div>
+  </div>
+
+  <!-- 底部信息面板 -->
+  <div class="info-panel">
+    <!-- 检测标签 -->
+    <div class="tags-row" id="tagsRow">
+      <span class="tag safe">⚪ 等待检测</span>
+    </div>
+
+    <!-- AI 分析结果 -->
+    <div class="ai-result idle" id="aiResult">
+      <div class="icon">🤖</div>
+      <div class="content">
+        <div class="label">AI 智能分析</div>
+        <div class="text" id="aiText">点击"开启镜头"开始导航。开启后将自动持续识别画面中的盲道、红绿灯、斑马线和障碍物，并通过语音为您提示。</div>
+      </div>
+    </div>
+
+    <!-- 设置区 -->
+    <div class="setting-row">
+      <span class="slabel">分析频率</span>
+      <select id="intervalSelect">
+        <option value="3000">快速（3秒）</option>
+        <option value="5000" selected>标准（5秒）</option>
+        <option value="8000">省流（8秒）</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <span class="slabel">语音语速</span>
+      <input type="range" id="rateRange" min="0.6" max="1.6" step="0.1" value="1.0">
+    </div>
+
+    <!-- 控制按钮 -->
+    <div class="controls">
+      <button class="btn btn-primary" id="cameraBtn">📷 开启镜头</button>
+      <button class="btn btn-secondary" id="speakBtn">🔊 语音测试</button>
+      <button class="btn btn-tertiary" id="settingBtn">⚙️</button>
+    </div>
+  </div>
+
+  <!-- 隐藏的抓图画布 -->
+  <canvas id="capture"></canvas>
+
+  <!-- API Key 设置弹窗 -->
+  <div class="modal-mask" id="apiModal">
+    <div class="modal">
+      <h2>🔑 DeepSeek API 设置</h2>
+      <p>请输入您的 DeepSeek API Key，用于视觉分析。Key 仅保存在本地浏览器，不会上传。<br><a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:var(--accent);">点击获取 API Key</a></p>
+      <input type="text" id="apiKeyInput" placeholder="sk-xxxxxxxxxxxxxxxx">
+      <div class="modal-btns">
+        <button class="btn btn-secondary" id="apiCancel">取消</button>
+        <button class="btn btn-primary" id="apiSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+</div>
+
+<script>
+// ==================== 全局状态 ====================
+const state = {
+  stream: null,
+  analyzing: false,
+  active: false,           // 导航是否激活
+  apiKey: localStorage.getItem('ds_api_key') || '',
+  interval: 5000,
+  timer: null,
+  lastSpeak: 0,
+  lastResult: null,
+  speechRate: 1.0,
+  voices: [],
+  zhVoice: null,
+};
+
+// ==================== DOM 引用 ====================
+const $ = id => document.getElementById(id);
+const video = $('video');
+const overlay = $('overlay');
+const captureCanvas = $('capture');
+const overlayCtx = overlay.getContext('2d');
+const captureCtx = captureCanvas.getContext('2d');
+
+// ==================== 语音合成初始化 ====================
+function initSpeech() {
+  if (!('speechSynthesis' in window)) {
+    showToast('当前浏览器不支持语音播报');
+    return;
+  }
+  const loadVoices = () => {
+    state.voices = window.speechSynthesis.getVoices();
+    // 优先选中文语音
+    state.zhVoice = state.voices.find(v => /zh|cmn|Chinese/i.test(v.lang)) 
+                 || state.voices.find(v => /zh/i.test(v.name))
+                 || null;
+  };
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+}
+
+function speak(text, priority = false) {
+  if (!('speechSynthesis' in window) || !text) return;
+  const now = Date.now();
+  // 同内容冷却 8 秒，避免重复
+  if (!priority && state.lastResult === text && now - state.lastSpeak < 8000) return;
+  state.lastSpeak = now;
+  state.lastResult = text;
+
+  if (priority) window.speechSynthesis.cancel();
+
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'zh-CN';
+  u.rate = state.speechRate;
+  u.pitch = 1.0;
+  u.volume = 1.0;
+  if (state.zhVoice) u.voice = state.zhVoice;
+  window.speechSynthesis.speak(u);
+}
+
+// ==================== Toast ====================
+function showToast(msg, dur = 2500) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), dur);
+}
+
+// ==================== 状态指示 ====================
+function setStatus(mode, text) {
+  const dot = $('statusDot');
+  dot.className = 'dot';
+  if (mode) dot.classList.add(mode);
+  $('statusText').textContent = text;
+}
+
+// ==================== 摄像头开启 ====================
+async function startCamera() {
+  try {
+    const constraints = {
+      video: {
+        facingMode: { ideal: 'environment' },  // 优先后置
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    };
+    state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = state.stream;
+    await video.play();
+
+    // 设置 overlay 和 capture 尺寸
+    const setSizes = () => {
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+      overlay.width = vw; overlay.height = vh;
+      captureCanvas.width = vw; captureCanvas.height = vh;
+    };
+    setSizes();
+    video.addEventListener('loadedmetadata', setSizes, { once: true });
+
+    return true;
+  } catch (e) {
+    console.error('摄像头开启失败', e);
+    let msg = '摄像头开启失败';
+    if (e.name === 'NotAllowedError') msg = '未获得摄像头权限，请在浏览器设置中允许';
+    else if (e.name === 'NotFoundError') msg = '未找到摄像头设备';
+    else if (e.name === 'NotReadableError') msg = '摄像头被其他程序占用';
+    showToast(msg, 4000);
+    return false;
+  }
+}
+
+function stopCamera() {
+  if (state.stream) {
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+    video.srcObject = null;
+  }
+}
+
+// ==================== 开启/关闭导航 ====================
+async function toggleNavigation() {
+  if (state.active) {
+    // 关闭
+    state.active = false;
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    stopCamera();
+    $('cameraBtn').textContent = '📷 开启镜头';
+    $('cameraBtn').classList.remove('active');
+    $('scanLine').style.display = 'none';
+    ['c1','c2','c3','c4'].forEach(id => $(id).style.display = 'none');
+    $('dirOverlay').classList.remove('show');
+    hideAlert();
+    setStatus('', '已停止');
+    clearOverlay();
+    updateTags({ items: [] });
+    $('aiText').textContent = '导航已停止。点击"开启镜头"重新开始。';
+    $('aiResult').classList.add('idle');
+    speak('导航已关闭', true);
+  } else {
+    // 开启
+    if (!state.apiKey) {
+      $('apiModal').classList.add('show');
+      showToast('请先设置 DeepSeek API Key');
+      return;
+    }
+    $('cameraBtn').textContent = '⏳ 正在开启...';
+    const ok = await startCamera();
+    if (!ok) {
+      $('cameraBtn').textContent = '📷 开启镜头';
+      return;
+    }
+    state.active = true;
+    $('cameraBtn').textContent = '⏹ 停止导航';
+    $('cameraBtn').classList.add('active');
+    $('scanLine').style.display = 'block';
+    ['c1','c2','c3','c4'].forEach(id => $(id).style.display = 'block');
+    setStatus('active', '导航中');
+    speak('导航已开启，正在识别周围环境', true);
+
+    // 立即分析一次，然后定时
+    analyzeFrame();
+    state.interval = parseInt($('intervalSelect').value);
+    state.timer = setInterval(analyzeFrame, state.interval);
+  }
+}
+
+// ==================== 抓取当前帧 ====================
+function grabFrame() {
+  if (!video.videoWidth) return null;
+  const w = video.videoWidth, h = video.videoHeight;
+  captureCanvas.width = w; captureCanvas.height = h;
+  captureCtx.drawImage(video, 0, 0, w, h);
+  // 压缩为 JPEG，控制大小
+  return captureCanvas.toDataURL('image/jpeg', 0.6);
+}
+
+// ==================== 调用 DeepSeek Vision API ====================
+async function callDeepSeek(base64Image) {
+  const sysPrompt = `你是一个专业的盲人导航视觉助手。用户会发送前方道路的摄像头画面截图，你需要分析画面并给出导航指引。
+
+你必须严格返回以下 JSON 格式（不要输出任何其他内容、不要 markdown 代码块）：
+{
+  "blind_track": {
+    "detected": true/false,
+    "direction": "直行" | "左转" | "右转" | "停止" | "未知",
+    "distance": "近" | "中" | "远" | "未知",
+    "description": "对盲道情况的简短描述"
+  },
+  "traffic_light": {
+    "detected": true/false,
+    "color": "红灯" | "绿灯" | "黄灯" | "未知",
+    "action": "停止" | "通行" | "准备停止" | "未知"
+  },
+  "crosswalk": {
+    "detected": true/false,
+    "distance": "近" | "中" | "远" | "未知",
+    "action": "可通行" | "等待" | "未知"
+  },
+  "obstacle": {
+    "detected": true/false,
+    "type": "障碍物类型简述",
+    "direction": "正前方" | "左前方" | "右前方" | "未知",
+    "distance": "近" | "中" | "远" | "未知",
+    "danger_level": "高" | "中" | "低"
+  },
+  "overall_guidance": "一句话总结当前应采取的行动，20字以内",
+  "voice_prompt": "给盲人的语音提示，口语化、简洁明确，30字以内",
+  "alert_level": "danger" | "warn" | "info" | "safe"
+}
+
+识别要点：
+- 盲道（黄色条形砖或圆点砖）：判断延伸方向
+- 红绿灯：识别颜色和通行状态
+- 斑马线：判断距离和是否可通行
+- 障碍物：任何挡路的物体（柱子、车辆、台阶、行人、自行车等）
+- 如果画面模糊或无法判断，各字段 detected 设为 false，direction/action 设为"未知"
+- voice_prompt 必须口语化，适合直接念给盲人听，例如"前方盲道直行，注意右侧有柱子"
+- alert_level：有近距离障碍物或红灯时 danger，斑马线等待或黄灯 warn，正常通行 info，安全 safe`;
+
+  const body = {
+    model: 'deepseek-flash',
+    messages: [
+      { role: 'system', content: sysPrompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '请分析这张前方道路画面，为盲人提供导航指引。严格按 JSON 格式返回。' },
+          { type: 'image_url', image_url: { url: base64Image, detail: 'low' } }
+        ]
+      }
+    ],
+    stream: false,
+    temperature: 0.3,
+    max_tokens: 800
+  };
+
+  const resp = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + state.apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`API错误(${resp.status}): ${errText.substring(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  let content = data.choices?.[0]?.message?.content || '';
+  // 清理可能的 markdown 代码块标记
+  content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  return JSON.parse(content);
+}
+
+// ==================== 主分析流程 ====================
+async function analyzeFrame() {
+  if (!state.active || state.analyzing) return;
+  state.analyzing = true;
+  setStatus('analyzing', 'AI 分析中...');
+
+  try {
+    const img = grabFrame();
+    if (!img) { state.analyzing = false; return; }
+
+    const result = await callDeepSeek(img);
+    state.lastResult = result;
+    renderResult(result);
+  } catch (e) {
+    console.error('分析失败', e);
+    setStatus('error', '分析失败');
+    $('aiText').textContent = '⚠️ ' + (e.message || '分析失败，请检查 API Key 和网络');
+    $('aiResult').classList.add('idle');
+    showToast('分析失败：' + (e.message || '未知错误').substring(0, 60), 3500);
+    // 语音播报错误（仅首次）
+    if (!state._errSpoken) {
+      speak('分析出现错误，请检查设置');
+      state._errSpoken = true;
+      setTimeout(() => state._errSpoken = false, 15000);
+    }
+  } finally {
+    state.analyzing = false;
+    if (state.active) setStatus('active', '导航中');
+  }
+}
+
+// ==================== 渲染分析结果 ====================
+function renderResult(r) {
+  // 1. 更新 AI 文本
+  $('aiResult').classList.remove('idle');
+  $('aiText').textContent = r.overall_guidance || r.voice_prompt || '分析完成';
+
+  // 2. 更新检测标签
+  const tags = [];
+  if (r.blind_track?.detected) tags.push({ cls: 'blind-track', text: `🟦 盲道·${r.blind_track.direction || '未知'}` });
+  if (r.traffic_light?.detected) tags.push({ cls: 'traffic-light', text: `🚦 ${r.traffic_light.color || '未知'}` });
+  if (r.crosswalk?.detected) tags.push({ cls: 'crosswalk', text: `🚶 斑马线·${r.crosswalk.distance || ''}` });
+  if (r.obstacle?.detected) tags.push({ cls: 'obstacle', text: `⚠️ 障碍·${r.obstacle.type || ''}` });
+  if (tags.length === 0) tags.push({ cls: 'safe', text: '⚪ 前方安全' });
+  updateTags({ items: tags });
+
+  // 3. 绘制 overlay 方向箭头标注
+  drawOverlay(r);
+
+  // 4. 方向大箭头
+  showDirectionArrow(r);
+
+  // 5. 告警横幅
+  showAlert(r);
+
+  // 6. 语音播报
+  if (r.voice_prompt) speak(r.voice_prompt);
+}
+
+function updateTags({ items }) {
+  const row = $('tagsRow');
+  if (!items.length) {
+    row.innerHTML = '<span class="tag safe">⚪ 等待检测</span>';
+    return;
+  }
+  row.innerHTML = items.map(t => `<span class="tag ${t.cls}">${t.text}</span>`).join('');
+}
+
+// ==================== Overlay 画面标注 ====================
+function clearOverlay() {
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+}
+
+function drawOverlay(r) {
+  clearOverlay();
+  const w = overlay.width, h = overlay.height;
+  const cx = w / 2, cy = h / 2;
+
+  // 如果检测到盲道，画一条引导线
+  if (r.blind_track?.detected) {
+    const dir = r.blind_track.direction;
+    overlayCtx.strokeStyle = '#00d4ff';
+    overlayCtx.lineWidth = 6;
+    overlayCtx.shadowColor = '#00d4ff';
+    overlayCtx.shadowBlur = 20;
+    overlayCtx.setLineDash([20, 10]);
+    overlayCtx.beginPath();
+    let ex = cx, ey = cy;
+    if (dir === '直行') { ex = cx; ey = h * 0.9; }
+    else if (dir === '左转') { ex = w * 0.15; ey = cy + 50; }
+    else if (dir === '右转') { ex = w * 0.85; ey = cy + 50; }
+    else { ex = cx; ey = h * 0.85; }
+    overlayCtx.moveTo(cx, cy);
+    overlayCtx.lineTo(ex, ey);
+    overlayCtx.stroke();
+    overlayCtx.setLineDash([]);
+
+    // 箭头头
+    drawArrowHead(ex, ey, cx, cy, '#00d4ff');
+
+    // 标注文字（注意 overlay 被镜像了，文字需要反向）
+    overlayCtx.save();
+    overlayCtx.scale(-1, 1);
+    overlayCtx.translate(-w, 0);
+    overlayCtx.shadowBlur = 8;
+    overlayCtx.fillStyle = '#00d4ff';
+    overlayCtx.font = 'bold 28px sans-serif';
+    overlayCtx.textAlign = 'center';
+    overlayCtx.fillText('盲道: ' + dir, w / 2, 50);
+    overlayCtx.restore();
+  }
+
+  // 障碍物框
+  if (r.obstacle?.detected) {
+    const ox = r.obstacle.direction === '左前方' ? w * 0.25 :
+               r.obstacle.direction === '右前方' ? w * 0.75 : w * 0.5;
+    const oy = h * 0.5;
+    const danger = r.obstacle.danger_level;
+    const color = danger === '高' ? '#ff3b3b' : danger === '中' ? '#ff6b35' : '#ffaa00';
+    overlayCtx.strokeStyle = color;
+    overlayCtx.lineWidth = 5;
+    overlayCtx.shadowColor = color;
+    overlayCtx.shadowBlur = 15;
+    // 画一个警告标记框
+    const size = 80;
+    overlayCtx.strokeRect(ox - size, oy - size, size * 2, size * 2);
+    // 感叹号
+    overlayCtx.save();
+    overlayCtx.scale(-1, 1);
+    overlayCtx.translate(-w, 0);
+    overlayCtx.fillStyle = color;
+    overlayCtx.font = 'bold 40px sans-serif';
+    overlayCtx.textAlign = 'center';
+    overlayCtx.fillText('⚠', w - ox, oy + 15);
+    overlayCtx.restore();
+  }
+
+  // 红绿灯标注
+  if (r.traffic_light?.detected) {
+    const color = r.traffic_light.color === '红灯' ? '#ff3b3b' :
+                  r.traffic_light.color === '绿灯' ? '#00e676' :
+                  r.traffic_light.color === '黄灯' ? '#ffd600' : '#ffffff';
+    overlayCtx.save();
+    overlayCtx.scale(-1, 1);
+    overlayCtx.translate(-w, 0);
+    overlayCtx.fillStyle = color;
+    overlayCtx.shadowColor = color;
+    overlayCtx.shadowBlur = 20;
+    overlayCtx.font = 'bold 32px sans-serif';
+    overlayCtx.textAlign = 'right';
+    overlayCtx.fillText('🚦' + (r.traffic_light.color || ''), w - 20, h - 20);
+    overlayCtx.restore();
+  }
+
+  overlayCtx.shadowBlur = 0;
+}
+
+function drawArrowHead(toX, toY, fromX, fromY, color) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  const len = 25;
+  overlayCtx.fillStyle = color;
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(toX, toY);
+  overlayCtx.lineTo(toX - len * Math.cos(angle - Math.PI / 6), toY - len * Math.sin(angle - Math.PI / 6));
+  overlayCtx.lineTo(toX - len * Math.cos(angle + Math.PI / 6), toY - len * Math.sin(angle + Math.PI / 6));
+  overlayCtx.closePath();
+  overlayCtx.fill();
+}
+
+// ==================== 方向大箭头 ====================
+function showDirectionArrow(r) {
+  const ov = $('dirOverlay');
+  const arrow = $('dirArrow');
+  if (!r.blind_track?.detected && !r.overall_guidance) {
+    ov.classList.remove('show');
+    return;
+  }
+  let symbol = '⬆️';
+  const dir = r.blind_track?.direction;
+  const action = r.overall_guidance || '';
+  if (r.obstacle?.detected && r.obstacle.danger_level === '高') {
+    symbol = '✋'; // 停止
+  } else if (r.traffic_light?.detected && r.traffic_light.color === '红灯') {
+    symbol = '🛑';
+  } else if (dir === '直行') symbol = '⬆️';
+  else if (dir === '左转') symbol = '⬅️';
+  else if (dir === '右转') symbol = '➡️';
+  else if (dir === '停止') symbol = '✋';
+  else if (action.includes('通行')) symbol = '🚶';
+  else symbol = '⬆️';
+
+  arrow.textContent = symbol;
+  ov.classList.add('show');
+}
+
+// ==================== 告警横幅 ====================
+function showAlert(r) {
+  const banner = $('alertBanner');
+  const level = r.alert_level || 'info';
+  let msg = '';
+  if (level === 'danger') {
+    if (r.obstacle?.detected) msg = '⚠️ 危险！前方' + (r.obstacle.type || '障碍物');
+    else if (r.traffic_light?.color === '红灯') msg = '🛑 红灯，请停止';
+    else msg = '⚠️ 注意安全';
+  } else if (level === 'warn') {
+    if (r.crosswalk?.detected) msg = '🚶 斑马线，' + (r.crosswalk.action || '注意');
+    else if (r.traffic_light?.color === '黄灯') msg = '🟡 黄灯，准备停止';
+    else msg = '⚠️ ' + (r.overall_guidance || '注意');
+  } else if (level === 'safe') {
+    msg = '✅ 前方安全';
+  } else {
+    msg = r.overall_guidance || '';
+  }
+  if (!msg) { hideAlert(); return; }
+  banner.textContent = msg;
+  banner.className = 'alert-banner ' + level + ' show';
+}
+
+function hideAlert() {
+  $('alertBanner').classList.remove('show');
+}
+
+// ==================== 事件绑定 ====================
+$('startBtn').addEventListener('click', async () => {
+  $('startMask').classList.add('hide');
+  // 检查 API Key
+  if (!state.apiKey) {
+    $('apiModal').classList.add('show');
+    showToast('请先设置 DeepSeek API Key');
+  }
+});
+
+$('cameraBtn').addEventListener('click', toggleNavigation);
+
+$('speakBtn').addEventListener('click', () => {
+  speak('语音播报测试正常，导航助手已就绪', true);
+});
+
+$('settingBtn').addEventListener('click', () => {
+  $('apiKeyInput').value = state.apiKey;
+  $('apiModal').classList.add('show');
+});
+
+$('apiSave').addEventListener('click', () => {
+  const key = $('apiKeyInput').value.trim();
+  if (!key) { showToast('请输入有效的 API Key'); return; }
+  state.apiKey = key;
+  localStorage.setItem('ds_api_key', key);
+  $('apiModal').classList.remove('show');
+  showToast('API Key 已保存');
+});
+
+$('apiCancel').addEventListener('click', () => {
+  $('apiModal').classList.remove('show');
+});
+
+$('intervalSelect').addEventListener('change', (e) => {
+  state.interval = parseInt(e.target.value);
+  if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = setInterval(analyzeFrame, state.interval);
+  }
+});
+
+$('rateRange').addEventListener('input', (e) => {
+  state.speechRate = parseFloat(e.target.value);
+});
+
+// 页面卸载清理
+window.addEventListener('beforeunload', () => {
+  stopCamera();
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+});
+
+// 初始化
+initSpeech();
+</script>
+</body>
+</html>
